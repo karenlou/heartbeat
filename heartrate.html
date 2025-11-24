@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dual Heart Orb Visualization</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { 
+      margin: 0; 
+      padding: 0; 
+      overflow: hidden; 
+    }
+    
+    .noise {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      opacity: 0.05;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    function useSmoothValue(value, duration = 1000) {
+      const [smooth, setSmooth] = useState(value);
+
+      useEffect(() => {
+        const frames = 50;
+        const frameTime = duration / frames;
+        const start = smooth;
+        const end = value;
+        const diff = end - start;
+
+        let current = 0;
+
+        const interval = setInterval(() => {
+          current++;
+          const t = current / frames;
+
+          const eased = t < 0.5
+            ? 4 * t * t * t
+            : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+          setSmooth(start + diff * eased);
+
+          if (current >= frames) clearInterval(interval);
+        }, frameTime);
+
+        return () => clearInterval(interval);
+      }, [value]);
+
+      return smooth;
+    }
+
+    function DualHeartVisualization() {
+      // Sensor 1 state
+      const [heartRate1, setHeartRate1] = useState(0);
+      const [irValue1, setIrValue1] = useState(0);
+      const [fingerDetected1, setFingerDetected1] = useState(false);
+      
+      // Sensor 2 state
+      const [heartRate2, setHeartRate2] = useState(0);
+      const [irValue2, setIrValue2] = useState(0);
+      const [fingerDetected2, setFingerDetected2] = useState(false);
+
+      const [connected, setConnected] = useState(false);
+      const [lastDataTime, setLastTime] = useState(Date.now());
+
+      useEffect(() => {
+        let ws;
+        let reconnectTimeout;
+
+        const connect = () => {
+          ws = new WebSocket("ws://localhost:8765");
+
+          ws.onopen = () => {
+            console.log("✓ Connected");
+            setConnected(true);
+          };
+
+          ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // Sensor 1 data
+            if (data.hr1 !== undefined) setHeartRate1(data.hr1);
+            if (data.ir1 !== undefined) setIrValue1(data.ir1);
+            if (data.finger1 !== undefined) setFingerDetected1(data.finger1 === 1);
+            
+            // Sensor 2 data
+            if (data.hr2 !== undefined) setHeartRate2(data.hr2);
+            if (data.ir2 !== undefined) setIrValue2(data.ir2);
+            if (data.finger2 !== undefined) setFingerDetected2(data.finger2 === 1);
+            
+            setLastTime(Date.now());
+          };
+
+          ws.onerror = () => setConnected(false);
+          ws.onclose = () => {
+            setConnected(false);
+            reconnectTimeout = setTimeout(connect, 2000);
+          };
+        };
+
+        connect();
+
+        return () => {
+          if (ws) ws.close();
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
+        };
+      }, []);
+
+      useEffect(() => {
+        const interval = setInterval(() => {
+          if (Date.now() - lastDataTime > 3000) {
+            setHeartRate1(0);
+            setHeartRate2(0);
+            setFingerDetected1(false);
+            setFingerDetected2(false);
+          }
+        }, 1000);
+
+        return () => clearInterval(interval);
+      }, [lastDataTime]);
+
+      return (
+        <div
+          className="w-full h-screen relative flex"
+          style={{
+            background: `
+              radial-gradient(circle at 50% 50%, 
+                #ff00c8 0%, 
+                transparent 30%),
+              #0062ff
+            `,
+          }}
+        >
+          {/* Noise texture overlay */}
+          <div className="noise" />
+
+          {/* Status indicator */}
+          <div className="absolute top-6 right-6 flex items-center gap-3 text-xs font-mono z-10">
+            <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-gray-300">
+              {connected ? 'Connected' : 'Disconnected'}
+            </span>
+          </div>
+
+          {/* Left half - Sensor 1 */}
+          <div className="w-1/2 relative flex items-center justify-center border-r border-white/10">
+            <HeartOrb 
+              heartRate={heartRate1}
+              irValue={irValue1}
+              fingerDetected={fingerDetected1}
+              label="Person 1"
+            />
+          </div>
+
+          {/* Right half - Sensor 2 */}
+          <div className="w-1/2 relative flex items-center justify-center">
+            <HeartOrb 
+              heartRate={heartRate2}
+              irValue={irValue2}
+              fingerDetected={fingerDetected2}
+              label="Person 2"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    function HeartOrb({ heartRate, irValue, fingerDetected, label }) {
+      const smoothBpm = useSmoothValue(heartRate);
+      const displayBpm = smoothBpm > 0 ? smoothBpm : 72;
+
+      const intensity = Math.max(0, Math.min(1, (displayBpm - 30) / 100));
+
+      const blueStage = { hue1: 200, hue2: 220, hue3: 190 };
+      const greenStage = { hue1: 160, hue2: 140, hue3: 170 };
+      const orangeStage = { hue1: 25, hue2: 35, hue3: 15 };
+      const redStage = { hue1: 355, hue2: 325, hue3: 5 };
+
+      let from, to, tBlend;
+
+      if (intensity < 0.33) {
+        from = blueStage;
+        to = greenStage;
+        tBlend = intensity * 3;
+      } else if (intensity < 0.66) {
+        from = greenStage;
+        to = orangeStage;
+        tBlend = (intensity - 0.33) * 3;
+      } else {
+        from = orangeStage;
+        to = redStage;
+        tBlend = (intensity - 0.66) * 3;
+      }
+
+      const hues = {
+        h1: lerp(from.hue1, to.hue1, tBlend),
+        h2: lerp(from.hue2, to.hue2, tBlend),
+        h3: lerp(from.hue3, to.hue3, tBlend),
+      };
+
+      const pulseDuration = (60 / displayBpm) * 1000;
+      const sizeScale = 1 + intensity * 0.8;
+      const opacityBase = 0.45 + intensity * 0.4;
+      const transition = "all 1.6s ease-in-out";
+
+      return (
+        <>
+          {/* Debug info */}
+          <div className="absolute top-6 left-6 text-xs text-gray-300 font-mono">
+            <div className="font-bold mb-1">{label}</div>
+            <div>IR: {irValue}</div>
+            <div>BPM: {heartRate}</div>
+            <div>{fingerDetected ? '👆 Detected' : 'Waiting...'}</div>
+          </div>
+
+          {/* Orb layers */}
+          <OrbLayer hue={hues.h1} size={50 * sizeScale} opacity={opacityBase} blur={20} spin={pulseDuration * 5} offset="0s" pulse={pulseDuration} transition={transition} />
+          <OrbLayer hue={hues.h2} size={40 * sizeScale} opacity={opacityBase * 1.1} blur={16} spin={pulseDuration * -4} offset="0.2s" pulse={pulseDuration} transition={transition} />
+          <OrbLayer hue={hues.h3} size={30 * sizeScale} opacity={opacityBase * 1.2} blur={12} spin={pulseDuration * 6} offset="0.1s" pulse={pulseDuration} transition={transition} />
+
+          {/* White glow center */}
+          <div
+            className="absolute rounded-full"
+            style={{
+              width: `${18 * sizeScale}vmin`,
+              height: `${18 * sizeScale}vmin`,
+              background: "radial-gradient(circle, rgba(255,255,255,1), rgba(255,255,255,0.6) 40%, transparent 70%)",
+              filter: "blur(8px)",
+              mixBlendMode: "screen",
+              animation: `pulse ${pulseDuration}ms ease-in-out infinite 0.1s`,
+            }}
+          />
+
+          {/* BPM label */}
+          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 text-center">
+            <div
+              className="text-6xl font-light tracking-wide"
+              style={{
+                color: `hsl(${hues.h2}, 85%, 60%)`,
+                transition,
+              }}
+            >
+              {Math.round(displayBpm)}
+            </div>
+            <div
+              className="text-xs tracking-[0.35em] uppercase"
+              style={{ color: `hsl(${hues.h1}, 70%, 55%)`, transition }}
+            >
+              bpm {heartRate === 0 ? '(waiting)' : ''}
+            </div>
+          </div>
+
+          <style>{`
+            @keyframes pulse {
+              0%, 100% { transform: scale(0.95); opacity: 0.85; }
+              50% { transform: scale(1.08); opacity: 1; }
+            }
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+        </>
+      );
+    }
+
+    function OrbLayer({ hue, size, opacity, blur, pulse, spin, offset, transition }) {
+      return (
+        <div
+          className="absolute rounded-full"
+          style={{
+            width: `${size}vmin`,
+            height: `${size}vmin`,
+            background: `radial-gradient(circle,
+              hsla(${hue}, 95%, 58%, ${opacity}),
+              hsla(${hue}, 90%, 50%, ${opacity * 0.6}) 40%,
+              transparent 75%)`,
+            filter: `blur(${blur}px)`,
+            animation: `
+              pulse ${pulse}ms ease-in-out infinite ${offset},
+              spin ${spin}ms linear infinite
+            `,
+            transition,
+          }}
+        />
+      );
+    }
+
+    ReactDOM.render(<DualHeartVisualization />, document.getElementById("root"));
+  </script>
+</body>
+</html>
